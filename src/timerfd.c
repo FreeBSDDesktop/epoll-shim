@@ -2,11 +2,7 @@
 #undef read
 #undef close
 
-#include <sys/types.h>
-
 #include <sys/event.h>
-#include <sys/param.h>
-#include <sys/time.h>
 
 #include <pthread.h>
 #include <pthread_np.h>
@@ -14,6 +10,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -59,11 +56,16 @@ worker_function(void *arg)
 	struct timerfd_context *ctx = arg;
 
 	siginfo_t info;
-	sigset_t set;
-	sigemptyset(&set);
-	sigaddset(&set, SIGRTMIN);
-	sigaddset(&set, SIGRTMIN + 1);
-	(void)pthread_sigmask(SIG_BLOCK, &set, NULL);
+	sigset_t rt_set;
+	sigset_t block_set;
+
+	sigemptyset(&rt_set);
+	sigaddset(&rt_set, SIGRTMIN);
+	sigaddset(&rt_set, SIGRTMIN + 1);
+
+	sigfillset(&block_set);
+
+	(void)pthread_sigmask(SIG_BLOCK, &block_set, NULL);
 
 	struct kevent kev;
 	EV_SET(&kev, 0, EVFILT_USER, 0, NOTE_TRIGGER, 0,
@@ -71,7 +73,7 @@ worker_function(void *arg)
 	(void)kevent(ctx->fd, &kev, 1, NULL, 0, NULL);
 
 	for (;;) {
-		if (sigwaitinfo(&set, &info) != SIGRTMIN) {
+		if (sigwaitinfo(&rt_set, &info) != SIGRTMIN) {
 			break;
 		}
 		EV_SET(&kev, 0, EVFILT_USER, 0, NOTE_TRIGGER, 0,
@@ -100,7 +102,7 @@ timerfd_create_impl(int clockid, int flags)
 	}
 
 	ctx->fd = kqueue();
-	if (ctx->fd == -1) {
+	if (ctx->fd < 0) {
 		return -1;
 	}
 
@@ -108,20 +110,20 @@ timerfd_create_impl(int clockid, int flags)
 
 	struct kevent kev;
 	EV_SET(&kev, 0, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, 0);
-	if (kevent(ctx->fd, &kev, 1, NULL, 0, NULL) == -1) {
+	if (kevent(ctx->fd, &kev, 1, NULL, 0, NULL) < 0) {
 		close(ctx->fd);
 		ctx->fd = -1;
 		return -1;
 	}
 
-	if (pthread_create(&ctx->worker, NULL, worker_function, ctx) == -1) {
+	if (pthread_create(&ctx->worker, NULL, worker_function, ctx) < 0) {
 		close(ctx->fd);
 		ctx->fd = -1;
 		return -1;
 	}
 
 	int ret = kevent(ctx->fd, NULL, 0, &kev, 1, NULL);
-	if (ret == -1) {
+	if (ret < 0) {
 		pthread_kill(ctx->worker, SIGRTMIN + 1);
 		pthread_join(ctx->worker, NULL);
 		close(ctx->fd);
@@ -129,13 +131,13 @@ timerfd_create_impl(int clockid, int flags)
 		return -1;
 	}
 
-	int tid = (int)kev.udata;
+	int tid = (int)(intptr_t)kev.udata;
 
 	struct sigevent sigev = {.sigev_notify = SIGEV_THREAD_ID,
 	    .sigev_signo = SIGRTMIN,
 	    .sigev_notify_thread_id = tid};
 
-	if (timer_create(clockid, &sigev, &ctx->timer) == -1) {
+	if (timer_create(clockid, &sigev, &ctx->timer) < 0) {
 		pthread_kill(ctx->worker, SIGRTMIN + 1);
 		pthread_join(ctx->worker, NULL);
 		close(ctx->fd);
@@ -209,7 +211,9 @@ timerfd_read(struct timerfd_context *ctx, void *buf, size_t nbytes)
 	    fd, NULL, 0, &kev, 1, (flags & TFD_NONBLOCK) ? &timeout : NULL);
 	if (ret == -1) {
 		return -1;
-	} else if (ret == 0) {
+	}
+
+	if (ret == 0) {
 		errno = EAGAIN;
 		return -1;
 	}
@@ -226,6 +230,7 @@ timerfd_close(struct timerfd_context *ctx)
 	timer_delete(ctx->timer);
 	pthread_kill(ctx->worker, SIGRTMIN + 1);
 	pthread_join(ctx->worker, NULL);
+	int ret = close(ctx->fd);
 	ctx->fd = -1;
-	return close(ctx->fd);
+	return ret;
 }

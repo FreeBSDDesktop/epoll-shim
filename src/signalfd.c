@@ -5,15 +5,14 @@
 #include <sys/types.h>
 
 #include <sys/event.h>
-#include <sys/param.h>
-#include <sys/time.h>
 
 #include <errno.h>
-#include <fcntl.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 struct signalfd_context {
@@ -70,7 +69,7 @@ signalfd_impl(int fd, const sigset_t *sigs, int flags)
 	}
 
 	ctx->fd = kqueue();
-	if (ctx->fd == -1) {
+	if (ctx->fd < 0) {
 		return -1;
 	}
 
@@ -86,7 +85,7 @@ signalfd_impl(int fd, const sigset_t *sigs, int flags)
 	}
 
 	int ret = kevent(ctx->fd, kevs, n, NULL, 0, NULL);
-	if (ret == -1) {
+	if (ret < 0) {
 		close(ctx->fd);
 		ctx->fd = -1;
 		return -1;
@@ -111,7 +110,7 @@ signalfd_read(struct signalfd_context *ctx, void *buf, size_t nbytes)
 	int flags = ctx->flags;
 	pthread_mutex_unlock(&signalfd_context_mtx);
 
-	// TODO: fix this to read multiple signals
+	// TODO(jan): fix this to read multiple signals
 	if (nbytes != sizeof(struct signalfd_siginfo)) {
 		errno = EINVAL;
 		return -1;
@@ -123,7 +122,8 @@ signalfd_read(struct signalfd_context *ctx, void *buf, size_t nbytes)
 	    fd, NULL, 0, &kev, 1, (flags & SFD_NONBLOCK) ? &timeout : NULL);
 	if (ret == -1) {
 		return -1;
-	} else if (ret == 0) {
+	}
+	if (ret == 0) {
 		errno = EAGAIN;
 		return -1;
 	}
@@ -137,6 +137,7 @@ signalfd_read(struct signalfd_context *ctx, void *buf, size_t nbytes)
 int
 signalfd_close(struct signalfd_context *ctx)
 {
+	int ret = close(ctx->fd);
 	ctx->fd = -1;
-	return close(ctx->fd);
+	return ret;
 }

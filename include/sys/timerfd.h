@@ -5,9 +5,8 @@
 extern "C" {
 #endif
 
-#include <time.h>
 #include <fcntl.h>
-#include <unistd.h>
+#include <time.h>
 
 #define TFD_NONBLOCK O_NONBLOCK
 #define TFD_CLOEXEC O_CLOEXEC
@@ -16,16 +15,22 @@ extern "C" {
 
 struct itimerspec;
 
-int timerfd_create(int, int);
-int timerfd_settime(int, int, const struct itimerspec *, struct itimerspec *);
+int timerfd_create(int /*clockid*/, int /*flags*/);
+int timerfd_settime(int /*fd*/, int /*flags*/,
+    const struct itimerspec * /*new*/, struct itimerspec * /*old*/);
 #if 0
 int timerfd_gettime(int, struct itimerspec *);
 #endif
 
-extern int epoll_shim_close(int fd);
-extern ssize_t epoll_shim_read(int fd, void *buf, size_t nbytes);
+#ifndef SHIM_SYS_SHIM_HELPERS
+#define SHIM_SYS_SHIM_HELPERS
+#include <unistd.h> /* IWYU pragma: keep */
+
+extern int epoll_shim_close(int /*fd*/);
+extern ssize_t epoll_shim_read(int /*fd*/, void * /*buf*/, size_t /*nbytes*/);
 #define read epoll_shim_read
 #define close epoll_shim_close
+#endif
 
 #ifdef __cplusplus
 }

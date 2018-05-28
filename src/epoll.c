@@ -1,34 +1,31 @@
 #include <sys/epoll.h>
 
 #include <sys/event.h>
-#include <sys/param.h>
-#include <sys/time.h>
-#include <sys/types.h>
-#include <sys/queue.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
 
 #include <errno.h>
 #include <poll.h>
-#include <signal.h>
 #include <stdio.h>
-#include <string.h>
+#include <time.h>
 
-#if 1
-int epoll_create(int size)
+int
+epoll_create(int size)
 {
-	fprintf(stderr, "ERROR: epoll_create() is deprecated, use epoll_create1(EPOLL_CLOEXEC).\n");
-	exit(-1);
-	/* return epoll_create1(0); */
+	(void)size;
+
+	errno = EINVAL;
+	return -1;
 }
-#endif
 
 int
 epoll_create1(int flags)
 {
 	if (flags != EPOLL_CLOEXEC) {
-		fprintf(stderr, "ERROR: Use epoll_create1(EPOLL_CLOEXEC).\n");
 		errno = EINVAL;
 		return -1;
 	}
+
 	return kqueue();
 }
 
@@ -36,95 +33,289 @@ static int poll_fd = -1;
 static int poll_epoll_fd = -1;
 static void *poll_ptr;
 
+#define KEY_BITS (20)
+#define VAL_BITS (32 - KEY_BITS)
 static int
-epoll_kevent_set(int fd, uintptr_t ident, short filter, u_short flags,
-				 u_int fflags, intptr_t data, void *udata)
+kqueue_save_state(int kq, uint32_t key, uint16_t val)
 {
-	int ret = 0;
-	struct kevent kev;
-	EV_SET(&kev, ident, filter, flags, fflags, data, udata);
-	ret = kevent(fd, &kev, 1, NULL, 0, NULL);
-	return ret;
+	struct kevent kev[VAL_BITS * 2];
+	int n = 0;
+	int i;
+	int oe, e;
+
+	if ((key & ~(((uint32_t)1 << KEY_BITS) - 1)) ||
+	    (val & ~(((uint16_t)1 << VAL_BITS) - 1))) {
+		return (-EINVAL);
+	}
+
+	for (i = 0; i < VAL_BITS; ++i) {
+		uint32_t info_bit = (uint32_t)1 << i;
+		uint32_t kev_key = key | (info_bit << KEY_BITS);
+		EV_SET(&kev[n], kev_key, EVFILT_USER, EV_ADD, 0, 0, 0);
+		++n;
+		if (!(val & info_bit)) {
+			EV_SET(&kev[n], kev_key, EVFILT_USER, /**/
+			    EV_DELETE, 0, 0, 0);
+			++n;
+		}
+	}
+
+	oe = errno;
+	if ((n = kevent(kq, kev, n, NULL, 0, NULL)) < 0) {
+		e = errno;
+		errno = oe;
+		return (-e);
+	}
+
+	return (0);
 }
 
-
 static int
-epoll_ctl_add(int fd, int fd2, struct epoll_event *ev)
+kqueue_load_state(int kq, uint32_t key, uint16_t *val)
 {
-	struct kevent kev;
-	int ret = 0;
-	if(ev->events & EPOLLIN) {
-		ret = epoll_kevent_set(fd, fd2, EVFILT_READ, EV_ADD, 0, 0, ev->data.ptr);
+	struct kevent kev[VAL_BITS];
+	int n = 0;
+	int i;
+	uint16_t nval = 0;
+	int oe, e;
+
+	if ((key & ~(((uint32_t)1 << KEY_BITS) - 1))) {
+		return (-EINVAL);
 	}
-	if(ret < 0)
-		return ret;
-	if(ev->events & EPOLLOUT) {
-		ret = epoll_kevent_set(fd, fd2, EVFILT_WRITE, EV_ADD, 0, 0, ev->data.ptr);
+
+	for (i = 0; i < VAL_BITS; ++i) {
+		uint32_t info_bit = (uint32_t)1 << i;
+		uint32_t kev_key = key | (info_bit << KEY_BITS);
+		EV_SET(&kev[i], kev_key, EVFILT_USER, EV_RECEIPT, 0, 0, 0);
 	}
-	return ret;
+
+	oe = errno;
+	if ((n = kevent(kq, kev, VAL_BITS, kev, VAL_BITS, NULL)) < 0) {
+		e = errno;
+		errno = oe;
+		return (-e);
+	}
+
+	for (i = 0; i < n; ++i) {
+		if (!(kev[i].flags & EV_ERROR)) {
+			return (-EINVAL);
+		}
+
+		if (kev[i].data == 0) {
+			nval |= (uint32_t)1 << i;
+		} else if (kev[i].data != ENOENT) {
+			return (-EINVAL);
+		}
+	}
+
+	*val = nval;
+
+	return (0);
 }
 
+#define KQUEUE_STATE_REGISTERED 0x1u
+#define KQUEUE_STATE_EPOLLIN 0x2u
+#define KQUEUE_STATE_EPOLLOUT 0x4u
+#define KQUEUE_STATE_EPOLLRDHUP 0x8u
+#define KQUEUE_STATE_NYCSS 0x10u
+#define KQUEUE_STATE_ISFIFO 0x20u
+#define KQUEUE_STATE_ISSOCK 0x40u
+
 static int
-epoll_ctl_del(int fd, int fd2, struct epoll_event *ev)
+is_not_yet_connected_stream_socket(int s)
 {
-	int ret = 0;
-	// This will fail (return -1) if we try to delete a non-existing
-	// event. This can happen so ignore return value for now.
-	ret = epoll_kevent_set(fd, fd2, EVFILT_READ, EV_DELETE, 0, 0, 0);
-	ret = epoll_kevent_set(fd, fd2, EVFILT_WRITE, EV_DELETE, 0, 0, 0);
-	// TODO: Check if event exist before attemt to delete. Is there an
-	// API for that or do we need to keep track of <ident,filter> events
-	// we added to the queue?
+	int type;
+	socklen_t length = sizeof(int);
+
+	if (getsockopt(s, SOL_SOCKET, SO_TYPE, &type, &length) == 0 &&
+	    (type == SOCK_STREAM || type == SOCK_SEQPACKET)) {
+		struct sockaddr name;
+		socklen_t namelen = 0;
+		if (getpeername(s, &name, &namelen) < 0 && errno == ENOTCONN) {
+			return 1;
+		}
+	}
+
 	return 0;
 }
 
 int
 epoll_ctl(int fd, int op, int fd2, struct epoll_event *ev)
 {
-	int ret = 0;
+	struct kevent kev[2];
+	uint16_t flags;
+	int e;
+
+	if ((!ev && op != EPOLL_CTL_DEL) ||
+	    (ev &&
+		((ev->events &
+		    ~(EPOLLIN | EPOLLOUT | EPOLLHUP | EPOLLRDHUP | EPOLLERR))
+		    /* the user should really set one of EPOLLIN or EPOLLOUT
+		     * so that EPOLLHUP and EPOLLERR work. Don't make this a
+		     * hard error for now, though. */
+		    /* || !(ev->events & (EPOLLIN | EPOLLOUT)) */))) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	if (fd2 < 0 || ((uint32_t)fd2 & ~(((uint32_t)1 << KEY_BITS) - 1))) {
+		errno = EBADF;
+		return (-1);
+	}
+
+	if ((e = kqueue_load_state(fd, fd2, &flags)) < 0) {
+		errno = e;
+		return (-1);
+	}
+
 	if (op == EPOLL_CTL_ADD) {
-		ret = epoll_ctl_add(fd, fd2, ev);
+		if (flags & KQUEUE_STATE_REGISTERED) {
+			errno = EEXIST;
+			return (-1);
+		}
+
+		EV_SET(&kev[0], fd2, EVFILT_READ,
+		    EV_ADD | (ev->events & EPOLLIN ? 0 : EV_DISABLE), 0, 0,
+		    ev->data.ptr);
+		EV_SET(&kev[1], fd2, EVFILT_WRITE,
+		    EV_ADD | (ev->events & EPOLLOUT ? 0 : EV_DISABLE), 0, 0,
+		    ev->data.ptr);
+
+		flags = KQUEUE_STATE_REGISTERED;
+
+#define SET_FLAG(flag)                                                        \
+	do {                                                                  \
+		if (ev->events & (flag)) {                                    \
+			flags |= KQUEUE_STATE_##flag;                         \
+		}                                                             \
+	} while (0)
+
+		SET_FLAG(EPOLLIN);
+		SET_FLAG(EPOLLOUT);
+		SET_FLAG(EPOLLRDHUP);
+
+#undef SET_FLAG
+
 	} else if (op == EPOLL_CTL_DEL) {
 		if (poll_fd == fd2 && fd == poll_epoll_fd) {
 			poll_fd = -1;
 			poll_epoll_fd = -1;
 			poll_ptr = NULL;
 			return 0;
-		} else {
-			ret = epoll_ctl_del(fd, fd2, ev);
 		}
+
+		if (!(flags & KQUEUE_STATE_REGISTERED)) {
+			errno = ENOENT;
+			return (-1);
+		}
+
+		EV_SET(&kev[0], fd2, EVFILT_READ, EV_DELETE, 0, 0, 0);
+		EV_SET(&kev[1], fd2, EVFILT_WRITE, EV_DELETE, 0, 0, 0);
+
+		flags = 0;
 	} else if (op == EPOLL_CTL_MOD) {
-		if(ev->events & EPOLLIN && ev->events & EPOLLOUT) {
-			// Adding both EVFILT_READ and EVFILT_WRITE
-			// Existing events will be modified.
-			ret = epoll_ctl_add(fd, fd2, ev);
-		} else if(ev->events & EPOLLOUT == 0) {
-			// Is it OK to assume this?
-			ret = epoll_kevent_set(fd, fd2, EVFILT_WRITE, EV_DELETE, 0, 0, 0);
-			// Returns -1 if event does not exist so ignore return value for now.
-			ret = 0;
-		} else if(ev->events & EPOLLIN == 0) {
-			// Is it OK to assume this?
-			ret = epoll_kevent_set(fd, fd2, EVFILT_READ, EV_DELETE, 0, 0, 0);
-			// Returns -1 if event does not exist so ignore return value for now.
-			ret = 0;
+		if (!(flags & KQUEUE_STATE_REGISTERED)) {
+			errno = ENOENT;
+			return (-1);
 		}
+
+		EV_SET(&kev[0], fd2, EVFILT_READ,
+		    ev->events & EPOLLIN ? EV_ENABLE : EV_DISABLE, 0, 0,
+		    ev->data.ptr);
+		EV_SET(&kev[1], fd2, EVFILT_WRITE,
+		    ev->events & EPOLLOUT ? EV_ENABLE : EV_DISABLE, 0, 0,
+		    ev->data.ptr);
+
+#define SET_FLAG(flag)                                                        \
+	do {                                                                  \
+		if (ev->events & (flag)) {                                    \
+			flags |= KQUEUE_STATE_##flag;                         \
+		} else {                                                      \
+			flags &= ~KQUEUE_STATE_##flag;                        \
+		}                                                             \
+	} while (0)
+
+		SET_FLAG(EPOLLIN);
+		SET_FLAG(EPOLLOUT);
+		SET_FLAG(EPOLLRDHUP);
+
+#undef SET_FLAG
+
 	} else {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	for (int i = 0; i < 2; ++i) {
+		kev[i].flags |= EV_RECEIPT;
+	}
+
+	int ret = kevent(fd, kev, 2, kev, 2, NULL);
+	if (ret < 0) {
+		return -1;
+	}
+
+	if (ret != 2) {
 		errno = EINVAL;
 		return -1;
 	}
-	if (ret == -1) {
-		if (errno == ENODEV && poll_fd == -1) {
+
+	for (int i = 0; i < 2; ++i) {
+		if (!(kev[i].flags & EV_ERROR)) {
+			errno = EINVAL;
+			return -1;
+		}
+
+		if (kev[i].data == ENODEV && poll_fd < 0) {
 			poll_fd = fd2;
 			poll_epoll_fd = fd;
 			poll_ptr = ev->data.ptr;
 			return 0;
 		}
-		return ret;
-	} else {
-		return 0;
+
+		/* ignore EVFILT_WRITE registration EINVAL errors (some fd
+		 * types such as kqueues themselves don't support it) */
+		if (i == 1 && kev[i].data == EINVAL) {
+			continue;
+		}
+
+		if (kev[i].data != 0) {
+			errno = kev[i].data;
+			return -1;
+		}
 	}
+
+	if (op != EPOLL_CTL_DEL && is_not_yet_connected_stream_socket(fd2)) {
+		EV_SET(&kev[0], fd2, EVFILT_READ, EV_ENABLE | EV_FORCEONESHOT,
+		    0, 0, ev->data.ptr);
+		if (kevent(fd, kev, 1, NULL, 0, NULL) < 0) {
+			return -1;
+		}
+
+		flags |= KQUEUE_STATE_NYCSS;
+	}
+
+	struct stat statbuf;
+	if (fstat(fd2, &statbuf) < 0) {
+		return -1;
+	}
+
+	if (S_ISFIFO(statbuf.st_mode)) {
+		flags |= KQUEUE_STATE_ISFIFO;
+	} else if (S_ISSOCK(statbuf.st_mode)) {
+		flags |= KQUEUE_STATE_ISSOCK;
+	}
+
+	if ((e = kqueue_save_state(fd, fd2, flags)) < 0) {
+		errno = e;
+		return (-1);
+	}
+
+	return 0;
 }
+
+#undef VAL_BITS
+#undef KEY_BITS
 
 #if 0
 int
@@ -143,7 +334,7 @@ epoll_pwait(
 int
 epoll_wait(int fd, struct epoll_event *ev, int cnt, int to)
 {
-	if (cnt < 1 || cnt > 32 || to < -1) {
+	if (cnt < 1 || cnt > 32) {
 		errno = EINVAL;
 		return -1;
 	}
@@ -166,35 +357,189 @@ epoll_wait(int fd, struct epoll_event *ev, int cnt, int to)
 		to = 0;
 	}
 
-	struct kevent evlist[cnt];
-	memset(evlist, 0, sizeof(evlist));
-
 	struct timespec timeout = {0, 0};
 	if (to > 0) {
 		timeout.tv_sec = to / 1000;
 		timeout.tv_nsec = (to % 1000) * 1000 * 1000;
 	}
 
-	int ret = kevent(fd, NULL, 0, evlist, cnt, to == -1 ? NULL : &timeout);
-	if (ret == -1) {
-		return ret;
+	struct timespec *ptimeout = NULL;
+	if (to >= 0) {
+		ptimeout = &timeout;
 	}
+
+again:;
+	struct kevent evlist[32];
+	int ret = kevent(fd, NULL, 0, evlist, cnt, ptimeout);
+	if (ret < 0) {
+		return -1;
+	}
+
+	int j = 0;
 
 	for (int i = 0; i < ret; ++i) {
 		int events = 0;
-		if(evlist[i].filter == EVFILT_READ) {
+		if (evlist[i].filter == EVFILT_READ) {
 			events |= EPOLLIN;
-		} else if(evlist[i].filter == EVFILT_WRITE) {
+			if (evlist[i].flags & EV_ONESHOT) {
+				uint16_t flags = 0;
+				kqueue_load_state(fd, evlist[i].ident, &flags);
+
+				if (flags & KQUEUE_STATE_NYCSS) {
+					if (is_not_yet_connected_stream_socket(
+						evlist[i].ident)) {
+
+						events = EPOLLHUP;
+						if (flags &
+						    KQUEUE_STATE_EPOLLOUT) {
+							events |= EPOLLOUT;
+						}
+
+						struct kevent nkev[2];
+						EV_SET(&nkev[0],
+						    evlist[i].ident,
+						    EVFILT_READ, EV_ADD, /**/
+						    0, 0, evlist[i].udata);
+						EV_SET(&nkev[1],
+						    evlist[i].ident,
+						    EVFILT_READ,
+						    EV_ENABLE |
+							EV_FORCEONESHOT,
+						    0, 0, evlist[i].udata);
+
+						kevent(fd, nkev, 2, NULL, 0,
+						    NULL);
+					} else {
+						flags &= ~KQUEUE_STATE_NYCSS;
+
+						struct kevent nkev[2];
+						EV_SET(&nkev[0],
+						    evlist[i].ident,
+						    EVFILT_READ, EV_ADD, /**/
+						    0, 0, evlist[i].udata);
+						EV_SET(&nkev[1],
+						    evlist[i].ident,
+						    EVFILT_READ,
+						    flags & KQUEUE_STATE_EPOLLIN
+							? EV_ENABLE
+							: EV_DISABLE,
+						    0, 0, evlist[i].udata);
+
+						kevent(fd, nkev, 2, NULL, 0,
+						    NULL);
+						kqueue_save_state(fd,
+						    evlist[i].ident, flags);
+
+						continue;
+					}
+				}
+			}
+		} else if (evlist[i].filter == EVFILT_WRITE) {
 			events |= EPOLLOUT;
 		}
-		if(evlist[i].flags & EV_ERROR) {
+
+		if (evlist[i].flags & EV_ERROR) {
 			events |= EPOLLERR;
 		}
-		if(evlist[i].flags & EV_EOF) {
-			events |= EPOLLHUP;
+
+		if (evlist[i].flags & EV_EOF) {
+			if (evlist[i].fflags) {
+				events |= EPOLLERR;
+			}
+
+			uint16_t flags = 0;
+			kqueue_load_state(fd, evlist[i].ident, &flags);
+
+			int epoll_event;
+
+			if (flags & KQUEUE_STATE_ISFIFO) {
+				if (evlist[i].filter == EVFILT_READ) {
+					epoll_event = EPOLLHUP;
+					if (evlist[i].data == 0) {
+						events &= ~EPOLLIN;
+					}
+				} else if (evlist[i].filter == EVFILT_WRITE) {
+					epoll_event = EPOLLERR;
+				} else {
+					/* should not happen */
+					return -1;
+				}
+			} else if (flags & KQUEUE_STATE_ISSOCK) {
+				if (evlist[i].filter == EVFILT_READ) {
+					/* do some special EPOLLRDHUP handling
+					 * for sockets */
+
+					/* if we are reading, we just know for
+					 * sure that we can't receive any more,
+					 * so use EPOLLIN/EPOLLRDHUP per
+					 * default */
+					epoll_event = EPOLLIN;
+
+					if (flags & KQUEUE_STATE_EPOLLRDHUP) {
+						epoll_event |= EPOLLRDHUP;
+					}
+				} else if (evlist[i].filter == EVFILT_WRITE) {
+					epoll_event = EPOLLOUT;
+				} else {
+					/* should not happen */
+					return -1;
+				}
+
+				struct pollfd pfd = {.fd = evlist[i].ident,
+				    .events = POLLIN | POLLOUT | POLLHUP};
+
+				if (poll(&pfd, 1, 0) == 1) {
+					if (pfd.revents & POLLHUP) {
+						/*
+						 * We need to set these flags
+						 * so that readers still have a
+						 * chance to read the last data
+						 * from the socket. This is
+						 * very important to preserve
+						 * Linux poll/epoll semantics
+						 * when coming from an
+						 * EVFILT_WRITE event.
+						 */
+						if (flags &
+						    KQUEUE_STATE_EPOLLIN) {
+							epoll_event |= EPOLLIN;
+						}
+						if (flags &
+						    KQUEUE_STATE_EPOLLRDHUP) {
+							epoll_event |=
+							    EPOLLRDHUP;
+						}
+
+						epoll_event |= EPOLLHUP;
+					}
+
+					/* might as well steal flags from the
+					 * poll call while we're here */
+
+					if ((pfd.revents & POLLIN) &&
+					    (flags & KQUEUE_STATE_EPOLLIN)) {
+						epoll_event |= EPOLLIN;
+					}
+
+					if ((pfd.revents & POLLOUT) &&
+					    (flags & KQUEUE_STATE_EPOLLOUT)) {
+						epoll_event |= EPOLLOUT;
+					}
+				}
+			} else {
+				epoll_event = EPOLLHUP;
+			}
+
+			events |= epoll_event;
 		}
-		ev[i].events = events;
-		ev[i].data.ptr = evlist[i].udata;
+		ev[j].events = events;
+		ev[j].data.ptr = evlist[i].udata;
+		++j;
 	}
-	return ret;
+
+	if (ret && j == 0) {
+		goto again;
+	}
+
+	return j;
 }

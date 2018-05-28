@@ -5,11 +5,13 @@
 extern "C" {
 #endif
 
-#include <sys/types.h>
+#include <sys/types.h> /* IWYU pragma: keep */
 
-#include <stdint.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdint.h>
+
+#include <stddef.h>
 
 #if 0
 #define __NEED_sigset_t
@@ -20,7 +22,7 @@ extern "C" {
 #define SFD_CLOEXEC O_CLOEXEC
 #define SFD_NONBLOCK O_NONBLOCK
 
-int signalfd(int, const sigset_t *, int);
+int signalfd(int /*fd*/, const sigset_t * /*sigs*/, int /*flags*/);
 
 struct signalfd_siginfo {
 	uint32_t  ssi_signo;
@@ -43,10 +45,15 @@ struct signalfd_siginfo {
 	uint8_t   pad[128-12*4-4*8-2];
 };
 
-extern int epoll_shim_close(int fd);
-extern ssize_t epoll_shim_read(int fd, void *buf, size_t nbytes);
+#ifndef SHIM_SYS_SHIM_HELPERS
+#define SHIM_SYS_SHIM_HELPERS
+#include <unistd.h> /* IWYU pragma: keep */
+
+extern int epoll_shim_close(int /*fd*/);
+extern ssize_t epoll_shim_read(int /*fd*/, void * /*buf*/, size_t /*nbytes*/);
 #define read epoll_shim_read
 #define close epoll_shim_close
+#endif
 
 #ifdef __cplusplus
 }
