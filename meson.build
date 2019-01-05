@@ -26,6 +26,7 @@ libepollshim_so_version = '0.0.0'
 # Dependencies
 thread_dep = dependency('threads')
 pkgconfig = import('pkgconfig')
+rt_dep = cc.find_library('rt')
 
 # Include directories
 includes_include = include_directories('include')
@@ -45,7 +46,9 @@ src_libepollshim = [ 'src/epoll.c',
 
 src_libepollshim += header_libepollshim
 
-deps_libepollshim = [ thread_dep ]
+deps_libepollshim = [ thread_dep,
+		rt_dep
+ ]
 
 lib_libepollshim = shared_library('epoll-shim',
 	src_libepollshim,
