@@ -1,0 +1,12 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: epoll-shim
+URL: https://github.com/FreeBSDDesktop/epoll-shim
+Description: Small epoll implementation using kqueue
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -lepoll-shim
+Libs.private: -pthread -lrt
+Cflags: -I${includedir}/libepoll-shim

@@ -11,8 +11,10 @@ set_target_properties(epoll-shim PROPERTIES
   LINK_FLAGS "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/../Version.map")
 set_target_properties(epoll-shim PROPERTIES SOVERSION 0)
 
+configure_file("epoll-shim.pc.in" "epoll-shim.pc" @ONLY)
 
 install(TARGETS epoll-shim LIBRARY             DESTINATION lib)
 install(FILES "${INCLUDES_DIR}/sys/epoll.h"    DESTINATION include/libepoll-shim/sys)
 install(FILES "${INCLUDES_DIR}/sys/signalfd.h" DESTINATION include/libepoll-shim/sys)
 install(FILES "${INCLUDES_DIR}/sys/timerfd.h"  DESTINATION include/libepoll-shim/sys)
+install(FILES "epoll-shim.pc"                  DESTINATION lib/pkgconfig)
