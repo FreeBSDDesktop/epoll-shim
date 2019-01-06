@@ -1,4 +1,4 @@
-project('libepoll-shim', 'c',
+project('epoll-shim', 'c',
 	version : '0.0.1',
 	license : 'MIT',
 	default_options : [ 'c_std=c11' ],
