@@ -12,4 +12,4 @@ task:
     - pkg upgrade -y
 
   script: |
-    make -j all
+    make -j 4
