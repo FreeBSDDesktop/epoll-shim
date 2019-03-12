@@ -16,7 +16,7 @@ dir_src		= join_paths(meson.source_root(), 'src')
 
 # Compiler setup
 cc = meson.get_compiler('c')
-cflags = ['-Wall', '-Wextra', '-Werror', '-fvisibility=hidden']
+cflags = ['-Wall', '-Wextra', '-Werror']
 add_project_arguments(cflags, language: 'c')
 
 #-Wno-missing-prototypes -Wno-padded -Wno-missing-variable-declarations -Wno-thread-safety-analysis
