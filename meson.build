@@ -31,6 +31,16 @@ rt_dep = cc.find_library('rt')
 # Include directories
 includes_include = include_directories('include')
 
+# Symbol map
+libepollshim_sym_path = meson.current_source_dir() + '/Version.map'
+libepollshim_sym_ldflag = '-Wl,--version-script=' + libepollshim_sym_path
+
+if cc.links('', name: '-Wl,--version-script', args: ['-shared', libepollshim_sym_ldflag])
+	link_args = [libepollshim_sym_ldflag]
+else
+	error('Linker doesn\'t support --version-script')
+endif 
+
 header_libepollshim = [ 'include/sys/epoll.h',
 	'include/sys/timerfd.h',
 	'include/sys/signalfd.h'
@@ -55,6 +65,7 @@ lib_libepollshim = both_libraries('epoll-shim',
 	include_directories : includes_include,
 	dependencies : deps_libepollshim,
 	version : libepollshim_so_version,
+	link_args : '-Wl,--version-script=' + libepollshim_sym_path,
 	install : true
 )
 
