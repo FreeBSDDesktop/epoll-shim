@@ -14,5 +14,6 @@
     eventfd;
     eventfd_read;
     eventfd_write;
-  local: *;
+  local:
+    *;
 };
