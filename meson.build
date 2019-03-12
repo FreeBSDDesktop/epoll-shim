@@ -48,7 +48,7 @@ src_libepollshim += header_libepollshim
 
 deps_libepollshim = [ thread_dep,
 		rt_dep
- ]
+]
 
 lib_libepollshim = shared_library('epoll-shim',
 	src_libepollshim,
