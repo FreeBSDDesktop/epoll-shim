@@ -2,7 +2,7 @@ project('epoll-shim', 'c',
 	version : '0.0.1',
 	license : 'MIT',
 	default_options : [ 'c_std=c11' ],
-	meson_version : '>=0.40.0' )
+	meson_version : '>=0.46.0' )
 
 libepollshim_version = meson.project_version().split('.')
 
@@ -58,10 +58,8 @@ lib_libepollshim = both_libraries('epoll-shim',
 	install : true
 )
 
-pkgconfig.generate(
-	filebase : 'libepoll-shim',
-	name : 'libepoll-shim',
+pkgconfig.generate(lib_libepollshim,
+	url : 'https://github.com/FreeBSDDesktop/epoll-shim',
 	description : 'small epoll implementation using kqueue',
-	version : meson.project_version(),
-	libraries : lib_libepollshim
+	subdirs : 'epoll-shim'
 )
