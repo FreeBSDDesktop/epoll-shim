@@ -50,18 +50,11 @@ deps_libepollshim = [ thread_dep,
 		rt_dep
 ]
 
-lib_libepollshim = shared_library('epoll-shim',
+lib_libepollshim = both_libraries('epoll-shim',
 	src_libepollshim,
 	include_directories : includes_include,
 	dependencies : deps_libepollshim,
 	version : libepollshim_so_version,
-	install : true
-)
-
-lib_libepollshima = static_library('epoll-shim',
-	src_libepollshim,
-	include_directories : includes_include,
-	dependencies : deps_libepollshim,
 	install : true
 )
 
