@@ -1,7 +1,7 @@
 project('epoll-shim', 'c',
 	version : '0.0.1',
 	license : 'MIT',
-	default_options : [ 'buildtype=debugoptimized', 'warning_level=3', 'c_std=c11' ],
+	default_options : [ 'buildtype=debugoptimized', 'warning_level=3', 'c_std=c11', 'c_args=-Werror' ],
 	meson_version : '>=0.46.0' )
 
 libepollshim_version = meson.project_version().split('.')
@@ -16,10 +16,6 @@ dir_src		= join_paths(meson.source_root(), 'src')
 
 # Compiler setup
 cc = meson.get_compiler('c')
-cflags = ['-Wall', '-Wextra', '-Werror']
-add_project_arguments(cflags, language: 'c')
-
-#-Wno-missing-prototypes -Wno-padded -Wno-missing-variable-declarations -Wno-thread-safety-analysis
 
 libepollshim_so_version = '0.0.0'
 
