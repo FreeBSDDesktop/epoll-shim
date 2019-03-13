@@ -72,5 +72,5 @@ lib_libepollshim = both_libraries('epoll-shim',
 pkgconfig.generate(lib_libepollshim,
 	url : 'https://github.com/FreeBSDDesktop/epoll-shim',
 	description : 'small epoll implementation using kqueue',
-	subdirs : 'epoll-shim'
+	subdirs : 'libepoll-shim'
 )
