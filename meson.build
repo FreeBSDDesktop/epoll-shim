@@ -1,7 +1,11 @@
 project('epoll-shim', 'c',
 	version : '0.0.1',
 	license : 'MIT',
-	default_options : [ 'buildtype=debugoptimized', 'warning_level=3', 'c_std=c11', 'werror=true' ],
+	default_options : [ 
+		'buildtype=debugoptimized',
+		'warning_level=3',
+		'c_std=c11',
+		'werror=true' ],
 	meson_version : '>=0.46.0' )
 
 libepollshim_version = meson.project_version().split('.')
