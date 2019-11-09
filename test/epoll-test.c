@@ -8,9 +8,11 @@
 #include <string.h>
 
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/signalfd.h>
-#include <sys/socket.h>
 #include <sys/timerfd.h>
+
+#include <sys/socket.h>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -21,14 +23,22 @@
 #include <time.h>
 #include <unistd.h>
 
+/* Uncomment this if you want the interactive test. */
+/* #define INTERACTIVE_TESTS */
+
 #define XSTR(a) STR(a)
 #define STR(a) #a
 
 #define TEST(fun)                                                             \
 	if ((fun) != 0) {                                                     \
-		printf(STR((fun)) " failed\n");                               \
+		fprintf(stderr, STR((fun)) " failed\n");                      \
+		r = 1;                                                        \
 	} else {                                                              \
-		printf(STR((fun)) " successful\n");                           \
+		fprintf(stderr, STR((fun)) " successful\n");                  \
+		if (check_for_fd_leaks() != 0) {                              \
+			fprintf(stderr, "but there was a fd leak...\n");      \
+			r = 1;                                                \
+		};                                                            \
 	}
 
 static int
@@ -496,13 +506,14 @@ test11()
 		return -1;
 	}
 
-	int fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
+	int fd = open("/dev/dsp", O_WRONLY | O_CLOEXEC);
 	if (fd < 0) {
-		return -1;
+		// Don't fail the test when there is no sound card.
+		goto out;
 	}
 
 	struct epoll_event event;
-	event.events = EPOLLIN | EPOLLOUT;
+	event.events = EPOLLOUT;
 	event.data.fd = fd;
 
 	if (epoll_ctl(ep, EPOLL_CTL_ADD, fd, &event) < 0) {
@@ -510,7 +521,11 @@ test11()
 	}
 
 	struct epoll_event event_result;
-	if (epoll_wait(ep, &event_result, 1, 300) != 0) {
+	if (epoll_wait(ep, &event_result, 1, 300) != 1) {
+		return -1;
+	}
+
+	if (event_result.events != EPOLLOUT || event_result.data.fd != fd) {
 		return -1;
 	}
 
@@ -518,7 +533,12 @@ test11()
 		return -1;
 	}
 
+	if (epoll_ctl(ep, EPOLL_CTL_DEL, fd, NULL) >= 0 || errno != ENOENT) {
+		return -1;
+	}
+
 	close(fd);
+out:
 	close(ep);
 	return 0;
 }
@@ -759,9 +779,12 @@ test15()
 	return 0;
 }
 
+static int fd_leak_test_a;
+static int fd_leak_test_b;
 static int
-testxx()
+check_for_fd_leaks()
 {
+	int r = 0;
 	/* test that all fds of previous tests have been closed successfully */
 
 	int fds[3];
@@ -769,13 +792,14 @@ testxx()
 		return -1;
 	}
 
-	if (fds[0] != 3 || fds[1] != 4) {
-		return -1;
+	if (fds[0] != fd_leak_test_a || fds[1] != fd_leak_test_b) {
+		r = -1;
 	}
 
 	close(fds[0]);
 	close(fds[1]);
-	return 0;
+
+	return r;
 }
 
 static void *
@@ -1120,6 +1144,7 @@ test20(int (*fd_fun)(int fds[3]))
 
 			// fprintf(stderr, "got %d\n", (int)c);
 		} else if (event_result.events == EPOLLOUT) {
+			write(event.data.fd, &c, 1);
 			// continue
 		} else if (fd_fun == fd_domain_socket &&
 		    (event_result.events & (EPOLLOUT | EPOLLHUP)) ==
@@ -1451,9 +1476,198 @@ test_recursive_register()
 	return 0;
 }
 
+static int
+test_remove_closed()
+{
+	int ep = epoll_create1(EPOLL_CLOEXEC);
+	if (ep < 0) {
+		return -1;
+	}
+
+	int fds[3];
+	if (fd_pipe(fds) < 0) {
+		return -1;
+	}
+
+	struct epoll_event event = {0};
+	event.events = EPOLLIN;
+
+	if (epoll_ctl(ep, EPOLL_CTL_ADD, fds[0], &event) < 0) {
+		return -1;
+	}
+
+	close(fds[0]);
+	close(fds[1]);
+
+	// Trying to delete an event that was already deleted by closing the
+	// associated fd should fail.
+	if (epoll_ctl(ep, EPOLL_CTL_DEL, fds[0], &event) != -1) {
+		return -1;
+	}
+
+	close(ep);
+	return 0;
+}
+
+static int
+test_same_fd_value()
+{
+	int ep = epoll_create1(EPOLL_CLOEXEC);
+	if (ep < 0) {
+		return -1;
+	}
+
+	int fds[3];
+	if (fd_pipe(fds) < 0) {
+		return -1;
+	}
+
+	struct epoll_event event = {0};
+	event.events = EPOLLIN;
+
+	if (epoll_ctl(ep, EPOLL_CTL_ADD, fds[0], &event) < 0) {
+		return -1;
+	}
+
+	int ret;
+	close(fds[0]);
+	close(fds[1]);
+
+	// Note: This wouldn't be needed under Linux as the close() calls above
+	// properly removes the descriptor from the epoll instance. However, in
+	// our epoll emulation we cannot (yet?) reliably detect if a descriptor
+	// has been closed before it is deleted from the epoll instance.
+	// See also: https://github.com/jiixyj/epoll-shim/pull/7
+	if (epoll_ctl(ep, EPOLL_CTL_DEL, fds[0], &event) != -1) {
+		return -1;
+	}
+
+	// Creating new pipe. The file descriptors will have the same numerical
+	// values as the previous ones.
+	if (fd_pipe(fds) < 0) {
+		return -1;
+	}
+
+	// If status of closed fds would not be cleared, adding an event with
+	// the fd that has the same numerical value as the closed one would
+	// fail.
+	struct epoll_event event2 = {0};
+	event2.events = EPOLLIN;
+	if ((ret = epoll_ctl(ep, EPOLL_CTL_ADD, fds[0], &event2)) < 0) {
+		return -1;
+	}
+
+	pthread_t writer_thread;
+	pthread_create(&writer_thread, NULL, sleep_then_write,
+	    (void *)(intptr_t)(fds[1]));
+
+	if ((ret = epoll_wait(ep, &event, 1, 300)) != 1) {
+		return -1;
+	}
+
+	pthread_join(writer_thread, NULL);
+
+	close(ep);
+	close(fds[0]);
+	close(fds[1]);
+	return 0;
+}
+
+static int
+test_invalid_writes()
+{
+	sigset_t mask;
+	int fd;
+
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGINT);
+
+	if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0) {
+		return -1;
+	}
+
+	char dummy = 0;
+
+	{
+		fd = signalfd(-1, &mask, 0);
+		if (fd < 0) {
+			return -1;
+		}
+
+		if (write(fd, &dummy, 1) >= 0) {
+			return -1;
+		}
+
+		if (errno != EINVAL) {
+			return -1;
+		}
+
+		close(fd);
+	}
+
+	{
+		fd = timerfd_create(CLOCK_MONOTONIC, 0);
+		if (fd < 0) {
+			return -1;
+		}
+
+		if (write(fd, &dummy, 1) >= 0) {
+			return -1;
+		}
+
+		if (errno != EINVAL) {
+			return -1;
+		}
+
+		close(fd);
+	}
+
+	{
+		fd = epoll_create1(EPOLL_CLOEXEC);
+		if (fd < 0) {
+			return -1;
+		}
+
+		if (write(fd, &dummy, 1) >= 0) {
+			return -1;
+		}
+
+		if (errno != EINVAL) {
+			return -1;
+		}
+
+		if (read(fd, &dummy, 1) >= 0) {
+			return -1;
+		}
+
+		if (errno != EINVAL) {
+			return -1;
+		}
+
+		close(fd);
+	}
+
+	return 0;
+}
+
 int
 main()
 {
+	int r = 0;
+
+	/* We check for fd leaks after each test. Remember fd numbers for
+	 * checking here. */
+	{
+		int fds[3];
+		if (fd_pipe(fds) < 0) {
+			return 1;
+		}
+		fd_leak_test_a = fds[0];
+		fd_leak_test_b = fds[1];
+		close(fds[0]);
+		close(fds[1]);
+	}
+
 	TEST(test1());
 	TEST(test2());
 	TEST(test3());
@@ -1483,10 +1697,14 @@ main()
 	TEST(test20(fd_domain_socket));
 	TEST(test21());
 	// TEST(test22());
+#ifdef INTERACTIVE_TESTS
 	TEST(test23());
+#endif
 	TEST(test24(fd_tcp_socket));
 	TEST(test_recursive_register());
+	TEST(test_remove_closed());
+	TEST(test_same_fd_value());
+	TEST(test_invalid_writes());
 
-	TEST(testxx());
-	return 0;
+	return r;
 }
