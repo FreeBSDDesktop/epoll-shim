@@ -20,4 +20,4 @@ task:
   test_script:
     - pwd
     - cd build
-    - ctest
+    - ctest -VV --output-on-failure
