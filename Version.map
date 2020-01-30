@@ -9,5 +9,6 @@
     signalfd;
     timerfd_create;
     timerfd_settime;
-  local: *;
+  local:
+    *;
 };

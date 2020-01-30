@@ -10,6 +10,7 @@ task:
   install_script:
     - sed -i.bak -e 's,pkg+http://pkg.FreeBSD.org/\${ABI}/quarterly,pkg+http://pkg.FreeBSD.org/\${ABI}/latest,' /etc/pkg/FreeBSD.conf
     - pkg upgrade -y
-
-  script: |
-    make -j 4
+    - pkg install -y meson ninja
+  meson_script:
+    - meson _build
+    - ninja -C _build
