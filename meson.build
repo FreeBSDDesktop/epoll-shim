@@ -42,7 +42,7 @@ else
 endif 
 
 header_libepollshim = [ 'include/sys/epoll.h',
-	'include/eventfd.h',
+	'include/sys/eventfd.h',
 	'include/sys/timerfd.h',
 	'include/sys/signalfd.h',
 ]
