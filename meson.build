@@ -42,6 +42,7 @@ else
 endif 
 
 header_libepollshim = [ 'include/sys/epoll.h',
+	'include/eventfd.h',
 	'include/sys/timerfd.h',
 	'include/sys/signalfd.h'
 ]
@@ -49,9 +50,19 @@ header_libepollshim = [ 'include/sys/epoll.h',
 install_headers(header_libepollshim, subdir : 'libepoll-shim/sys')
 
 src_libepollshim = [ 'src/epoll.c',
-	'src/timerfd.c',
+	'src/epoll_shim_ctx.c',
+	'src/epoll_shim_ctx.h',
+	'src/epollfd_ctx.c',
+	'src/epollfd_ctx.h',
+	'src/eventfd.c'.
+	'src/eventfd_ctx.c'
+	'src/eventfd_ctx.h'
 	'src/signalfd.c',
-	'src/common.c'
+	'src/signalfd_ctx.c',
+	'src/signalfd_ctx.h',
+	'src/timerfd.c',
+	'src/timerfd_ctx.c',
+	'src/timerfd_ctx.h',
 ]
 
 src_libepollshim += header_libepollshim
