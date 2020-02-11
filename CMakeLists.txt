@@ -1,8 +1,76 @@
-cmake_minimum_required(VERSION 3.9)
-project(epoll-shim C)
+cmake_minimum_required(VERSION 3.14)
+project(epoll-shim LANGUAGES C)
 
-set(CMAKE_C_STANDARD 99)
+option(BUILD_SHARED_LIBS "build libepoll-shim as shared lib" ON)
+option(ENABLE_COMPILER_WARNINGS "enable compiler warnings" OFF)
+
+if(ENABLE_COMPILER_WARNINGS)
+  add_compile_options("-Wall"
+                      "-Wextra"
+                      "-Wconversion"
+                      "-Wsign-conversion"
+                      "-Wmissing-prototypes"
+                      "-pedantic"
+                      "-Werror=implicit-function-declaration"
+                      "-Werror=return-type"
+                      "-Werror=incompatible-pointer-types")
+endif()
+
+include(CTest)
+
+set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_EXTENSIONS ON)
 
 add_subdirectory(src)
-add_subdirectory(test)
+
+if(PROJECT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+  set(_namespace "${PROJECT_NAME}")
+
+  if(BUILD_TESTING)
+    file(WRITE "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"
+         "add_library(${_namespace}::epoll-shim ALIAS epoll-shim)\n")
+    set(${PROJECT_NAME}_DIR "${PROJECT_BINARY_DIR}")
+    if(ENABLE_COMPILER_WARNINGS)
+      add_compile_options("-w")
+    endif()
+    add_subdirectory(test)
+  endif()
+
+  include(GNUInstallDirs)
+
+  set(CMAKE_INSTALL_PKGCONFIGDIR
+      "libdata/pkgconfig"
+      CACHE PATH "Installation directory for pkgconfig (.pc) files")
+  mark_as_advanced(CMAKE_INSTALL_PKGCONFIGDIR)
+  set(CMAKE_INSTALL_CMAKEBASEDIR
+      "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}"
+      CACHE PATH "Installation directory for CMake config (.cmake) files")
+  mark_as_advanced(CMAKE_INSTALL_CMAKEBASEDIR)
+
+  configure_file("${PROJECT_SOURCE_DIR}/${PROJECT_NAME}.pc.cmakein"
+                 "${PROJECT_BINARY_DIR}/${PROJECT_NAME}.pc" @ONLY)
+  install(FILES "${PROJECT_BINARY_DIR}/${PROJECT_NAME}.pc"
+          DESTINATION "${CMAKE_INSTALL_PKGCONFIGDIR}")
+
+  set(CMAKE_INSTALL_INCLUDEDIR "${CMAKE_INSTALL_INCLUDEDIR}/libepoll-shim")
+  install(TARGETS epoll-shim
+          EXPORT ${PROJECT_NAME}-targets
+          LIBRARY
+          INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+  install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/" TYPE INCLUDE)
+
+  install(EXPORT ${PROJECT_NAME}-targets
+          NAMESPACE "${_namespace}::"
+          DESTINATION "${CMAKE_INSTALL_CMAKEBASEDIR}")
+  if(NOT BUILD_SHARED_LIBS)
+    set(_deps "include(CMakeFindDependencyMacro)\n"
+              "set(THREADS_PREFER_PTHREAD_FLAG ON)\n"
+              "find_dependency(Threads)\n")
+  endif()
+  file(
+    WRITE "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"
+    ${_deps}
+    "include(\"\${CMAKE_CURRENT_LIST_DIR}/${PROJECT_NAME}-targets.cmake\")\n")
+  install(FILES "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"
+          DESTINATION "${CMAKE_INSTALL_CMAKEBASEDIR}")
+endif()

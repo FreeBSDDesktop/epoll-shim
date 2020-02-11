@@ -6,10 +6,18 @@ task:
   freebsd_instance:
     matrix:
       image: freebsd-12-0-release-amd64
-      image: freebsd-11-2-release-amd64
+      image: freebsd-11-3-stable-amd64-v20190808
   install_script:
     - sed -i.bak -e 's,pkg+http://pkg.FreeBSD.org/\${ABI}/quarterly,pkg+http://pkg.FreeBSD.org/\${ABI}/latest,' /etc/pkg/FreeBSD.conf
     - pkg upgrade -y
-
-  script: |
-    make -j 4
+    - pkg install -y cmake
+  build_script:
+    - pwd
+    - mkdir build
+    - cd build
+    - cmake .. -DCMAKE_BUILD_TYPE=Release
+    - cmake --build . -- -j4
+  test_script:
+    - pwd
+    - cd build
+    - ctest -VV --output-on-failure
