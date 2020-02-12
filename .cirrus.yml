@@ -18,4 +18,5 @@ task:
     - mkdir _build
     - cd _build
     - cmake -DCMAKE_C_COMPILER:STRING="cc"  -DCMAKE_CXX_COMPILER:STRING="c++"  -DCMAKE_C_FLAGS:STRING="-O2 -pipe  -fstack-protector-strong -fno-strict-aliasing "  -DCMAKE_C_FLAGS_DEBUG:STRING="-O2 -pipe  -fstack-protector-strong -fno-strict-aliasing "  -DCMAKE_C_FLAGS_RELEASE:STRING="-O2 -pipe  -fstack-protector-strong -fno-strict-aliasing "  -DCMAKE_CXX_FLAGS:STRING="-O2 -pipe -fstack-protector-strong -fno-strict-aliasing  "  -DCMAKE_CXX_FLAGS_DEBUG:STRING="-O2 -pipe -fstack-protector-strong -fno-strict-aliasing  "  -DCMAKE_CXX_FLAGS_RELEASE:STRING="-O2 -pipe -fstack-protector-strong -fno-strict-aliasing  "  -DCMAKE_EXE_LINKER_FLAGS:STRING=" -fstack-protector-strong "  -DCMAKE_MODULE_LINKER_FLAGS:STRING=" -fstack-protector-strong "  -DCMAKE_SHARED_LINKER_FLAGS:STRING=" -fstack-protector-strong "  -DCMAKE_INSTALL_PREFIX:PATH="/usr/local"  -DCMAKE_BUILD_TYPE:STRING="Release"  -DTHREADS_HAVE_PTHREAD_ARG:BOOL=YES  -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=YES  -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON -GNinja ../
+    - ninja -v
     - ctest
