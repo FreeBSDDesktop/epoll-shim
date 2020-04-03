@@ -1,7 +1,11 @@
 #ifndef TIMERFD_CTX_H_
 #define TIMERFD_CTX_H_
 
+#ifdef __OpenBSD__
+#include <sys/time.h>
+#else
 #include <sys/timespec.h>
+#endif
 
 #include <errno.h>
 #include <stdatomic.h>
