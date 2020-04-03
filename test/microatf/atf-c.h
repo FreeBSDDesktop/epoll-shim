@@ -13,6 +13,14 @@
 
 #include <unistd.h>
 
+#ifdef __OpenBSD__
+#define STAILQ_ENTRY SIMPLEQ_ENTRY
+#define STAILQ_FOREACH SIMPLEQ_FOREACH
+#define STAILQ_HEAD SIMPLEQ_HEAD
+#define STAILQ_HEAD_INITIALIZER SIMPLEQ_HEAD_INITIALIZER
+#define STAILQ_INSERT_TAIL SIMPLEQ_INSERT_TAIL
+#endif
+
 /**/
 
 #define MICROATF_ATTRIBUTE_UNUSED __attribute__((__unused__))
@@ -133,7 +141,7 @@ microatf_context_write_result_pack(microatf_context_t *context,
 		return;
 	}
 
-#ifdef __NetBSD__
+#if defined(__NetBSD__) || defined(__OpenBSD__)
 	fclose(context->result_file);
 	context->result_file = fopen(context->result_file_path, "w");
 #else

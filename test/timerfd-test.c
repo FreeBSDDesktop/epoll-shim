@@ -6,7 +6,9 @@
 
 #ifndef __linux__
 #include <sys/event.h>
+#ifndef __OpenBSD__
 #include <sys/timespec.h>
+#endif
 #endif
 
 #include <sys/param.h>

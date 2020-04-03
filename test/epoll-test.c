@@ -562,7 +562,7 @@ ATF_TC_BODY_FD_LEAKCHECK(epoll__no_epollin_on_closed_empty_pipe, tcptr)
 ATF_TC_WITHOUT_HEAD(epoll__write_to_pipe_until_full);
 ATF_TC_BODY_FD_LEAKCHECK(epoll__write_to_pipe_until_full, tcptr)
 {
-#ifdef __NetBSD__
+#if defined(__NetBSD__) || defined(__OpenBSD__)
 	atf_tc_skip("test assumes a pipe buffer size of 65536");
 #endif
 	int ep = epoll_create1(EPOLL_CLOEXEC);
@@ -764,7 +764,7 @@ ATF_TC_BODY_FD_LEAKCHECK(epoll__socket_shutdown, tcptr)
 ATF_TC_WITHOUT_HEAD(epoll__epollhup_on_fresh_socket);
 ATF_TC_BODY_FD_LEAKCHECK(epoll__epollhup_on_fresh_socket, tcptr)
 {
-#ifdef __NetBSD__
+#if defined(__NetBSD__) || defined(__OpenBSD__)
 	atf_tc_skip("NetBSD does not support EV_FORCEONESHOT");
 #endif
 	int sock = socket(PF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
